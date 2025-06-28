@@ -1,4 +1,4 @@
-print("Hello, World!")--== 服务 ==--
+--== 服务 ==--
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,7 +10,9 @@ local Camera = workspace.CurrentCamera
 
 --== 白名单用户名列表 ==--
 local allowedNames = {
-    "YXZM1017", -- 你自己
+    "YXZM1017",
+    "CN_PT6",
+    "PT7776", -- 你自己
     -- 你可以继续添加其他允许的用户名，比如：
     -- "Player2",
     -- "SomeFriend",
@@ -50,6 +52,14 @@ local aimPartIndex = 1
 _G.AIM_PART = aimParts[aimPartIndex]
 
 local currentTarget = nil
+
+-- 判断角色是否死亡
+local function isDead(character)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return true end
+    if humanoid.Health <= 0 then return true end
+    return false
+end
 
 --== UI 创建 ==--
 local screenGui = Instance.new("ScreenGui", CoreGui)
@@ -96,6 +106,7 @@ end
 local function applyHighlight(player)
 	if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
 	if _G.TEAM_CHECK and player.Team == LocalPlayer.Team then return end
+	if isDead(player.Character) then return end -- 新增死亡检测，死了不高亮
 	if not player.Character:FindFirstChild("HeatVision") then
 		local hl = Instance.new("Highlight")
 		hl.Name = "HeatVision"
@@ -224,8 +235,14 @@ end)
 RunService.RenderStepped:Connect(function()
 	if _G.AIMLOCK_ENABLED and UserInputService:IsMouseButtonPressed(_G.LOCK_KEY) then
 		if currentTarget and currentTarget:IsDescendantOf(workspace) then
-			Camera.CFrame = CFrame.new(Camera.CFrame.Position, currentTarget.Position)
-			return
+			-- 再次确认目标没死且不在队伍
+			local targetCharacter = currentTarget.Parent
+			if targetCharacter and not isDead(targetCharacter) then
+				if not (_G.TEAM_CHECK and Players:GetPlayerFromCharacter(targetCharacter) and Players:GetPlayerFromCharacter(targetCharacter).Team == LocalPlayer.Team) then
+					Camera.CFrame = CFrame.new(Camera.CFrame.Position, currentTarget.Position)
+					return
+				end
+			end
 		end
 
 		local shortest = math.huge
@@ -234,6 +251,7 @@ RunService.RenderStepped:Connect(function()
 		for _, player in pairs(Players:GetPlayers()) do
 			if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(_G.AIM_PART) then
 				if _G.TEAM_CHECK and player.Team == LocalPlayer.Team then continue end
+				if isDead(player.Character) then continue end -- 过滤死了的玩家
 				local part = player.Character[_G.AIM_PART]
 				local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
 				local dist = (Vector2.new(screenPos.X, screenPos.Y) - UserInputService:GetMouseLocation()).Magnitude
@@ -247,6 +265,8 @@ RunService.RenderStepped:Connect(function()
 
 		if bestTarget then
 			currentTarget = bestTarget
+		else
+			currentTarget = nil
 		end
 	else
 		currentTarget = nil
@@ -264,9 +284,13 @@ RunService.RenderStepped:Connect(function()
 				local distLabel = bb:FindFirstChild("DistanceLabel")
 				if distLabel then
 					if _G.SHOW_DISTANCE then
-						local dist = (LocalPlayer.Character.HumanoidRootPart.Position - head.Position).Magnitude
-						distLabel.Text = string.format("[%.1f m]", dist)
-						distLabel.Visible = true
+						if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+							local dist = (LocalPlayer.Character.HumanoidRootPart.Position - head.Position).Magnitude
+							distLabel.Text = string.format("[%.1f m]", dist)
+							distLabel.Visible = true
+						else
+							distLabel.Visible = false
+						end
 					else
 						distLabel.Visible = false
 					end
@@ -325,4 +349,4 @@ signature.TextSize = 14
 signature.Text = "本脚本由YXZM1017个人开发 禁止倒卖"
 signature.TextXAlignment = Enum.TextXAlignment.Center
 
-print("✅ Aimlock 脚本加载完成（白名单限制+距离显示颜色+多锁定部位+距离开关+热成像自动刷新）")
+print("✅ Aimlock 脚本加载完成（白名单限制+距离显示颜色+多锁定部位+距离开关+热成像自动刷新+敌我识别+死亡过滤）")
