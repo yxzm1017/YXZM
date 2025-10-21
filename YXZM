@@ -73,7 +73,7 @@ mainFrame.Draggable = false -- 自定义拖动
 local title = Instance.new("TextLabel", mainFrame)
 title.Size = UDim2.new(1, 0, 0, 40)
 title.BackgroundTransparency = 1
-title.Text = "FPS大蛇3.0 Beta"
+title.Text = "玩家军团2.0"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 20
@@ -136,19 +136,61 @@ local function createToggle(name, default, callback)
     end)
 end
 
--- 热成像相关
+--== 🌈 阵营智能热成像系统 ==--
+local colorPalette = {
+    Color3.fromRGB(255, 0, 0),     -- 红
+    Color3.fromRGB(0, 120, 255),   -- 蓝
+    Color3.fromRGB(0, 255, 0),     -- 绿
+    Color3.fromRGB(255, 255, 0),   -- 黄
+    Color3.fromRGB(255, 0, 255),   -- 紫
+    Color3.fromRGB(255, 165, 0),   -- 橙
+}
+
+local teamColorMap = {}
+
+local function assignTeamColors()
+    teamColorMap = {}
+    local uniqueTeams = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        local teamKey = p.Team and p.Team.Name or (p.TeamColor and tostring(p.TeamColor)) or "NoTeam"
+        if not table.find(uniqueTeams, teamKey) then
+            table.insert(uniqueTeams, teamKey)
+        end
+    end
+    for i, teamKey in ipairs(uniqueTeams) do
+        teamColorMap[teamKey] = colorPalette[(i - 1) % #colorPalette + 1]
+    end
+end
+
 local function applyHighlight(player)
     if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
-    if _G.TEAM_CHECK and player.Team == LocalPlayer.Team then return end
     if isDead(player.Character) then return end
+
+    local teamKey = player.Team and player.Team.Name or (player.TeamColor and tostring(player.TeamColor)) or "NoTeam"
+    local color = teamColorMap[teamKey]
+    if not color then
+        color = (player.Team == LocalPlayer.Team) and Color3.fromRGB(0, 120, 255) or Color3.fromRGB(255, 0, 0)
+    end
+
     if not player.Character:FindFirstChild("HeatVision") then
         local hl = Instance.new("Highlight")
         hl.Name = "HeatVision"
-        hl.FillColor = Color3.fromRGB(255, 0, 0)
-        hl.OutlineColor = Color3.fromRGB(255, 150, 150)
+        hl.FillColor = color
+        hl.OutlineColor = Color3.new(
+            math.clamp(color.R + 0.3, 0, 1),
+            math.clamp(color.G + 0.3, 0, 1),
+            math.clamp(color.B + 0.3, 0, 1)
+        )
         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         hl.Adornee = player.Character
         hl.Parent = player.Character
+    else
+        player.Character.HeatVision.FillColor = color
+        player.Character.HeatVision.OutlineColor = Color3.new(
+            math.clamp(color.R + 0.3, 0, 1),
+            math.clamp(color.G + 0.3, 0, 1),
+            math.clamp(color.B + 0.3, 0, 1)
+        )
     end
 end
 
@@ -159,16 +201,24 @@ local function removeHighlight(player)
 end
 
 local function updateHeatVision(state)
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            if state then
+    if state then
+        assignTeamColors()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
                 applyHighlight(p)
-            else
-                removeHighlight(p)
             end
+        end
+    else
+        for _, p in ipairs(Players:GetPlayers()) do
+            removeHighlight(p)
         end
     end
 end
+
+-- 玩家加入时动态重新分配颜色
+Players.PlayerAdded:Connect(function(p)
+    p:GetPropertyChangedSignal("Team"):Connect(assignTeamColors)
+end)
 
 -- 玩家名 + 距离显示 (字体大小调整)
 local function updateNames(state)
@@ -445,7 +495,7 @@ signature.BackgroundTransparency = 1
 signature.TextColor3 = Color3.fromRGB(0, 255, 0)
 signature.Font = Enum.Font.GothamBold
 signature.TextSize = 14
-signature.Text = "本脚本由YXZM1017个人开发 更新时间2025.6.25"
+signature.Text = "本脚本由YXZM1017个人开发 更新时间2025.10.21"
 signature.TextXAlignment = Enum.TextXAlignment.Center
 
 print("✅ 脚本加载完成（白名单+热成像+速度+穿墙+UI+自瞄+距离显示+可拖动+FOV调节）")
