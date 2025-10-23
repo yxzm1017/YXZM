@@ -1,3 +1,483 @@
-{
-  "whitelist": ["YXZM1017"]
+--== 🗝️ 服务 ==--
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+--== 🛡️ 白名单验证 ==--
+local allowedNames = {
+    "YXZM1017",
+    "CN_PT6",
+    "PT7776",
 }
+local function isAllowed(name)
+    for _, v in ipairs(allowedNames) do
+        if v == name then return true end
+    end
+    return false
+end
+if not isAllowed(LocalPlayer.Name) then
+    StarterGui:SetCore("SendNotification", {
+        Title = "权限拒绝";
+        Text = "检测到未授权用户，请购买正版使用！";
+        Duration = 5;
+    })
+    task.delay(1, function()
+        LocalPlayer:Kick("检测到未授权用户，请购买正版使用！")
+    end)
+    return
+end
+
+_G.AIMLOCK_ENABLED = false
+_G.HEATVISION_ENABLED = false
+_G.SHOW_NAMES = true
+_G.SHOW_DISTANCE = true
+_G.FOV_RADIUS = 100
+_G.TEAM_CHECK = true
+_G.LOCK_KEY = Enum.UserInputType.MouseButton2
+
+_G.FLY_ENABLED = false
+_G.SPEED_ENABLED = false
+_G.NOCOLLIDE_ENABLED = false
+
+local aimParts = {"Head", "Neck", "LeftHand", "RightHand", "LeftFoot", "RightFoot", "HumanoidRootPart"}
+local aimPartIndex = 1
+_G.AIM_PART = aimParts[aimPartIndex]
+local currentTarget = nil
+
+--== 死亡判断 ==--
+local function isDead(character)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return true end
+    return false
+end
+
+--==  UI 创建 ==--
+local screenGui = Instance.new("ScreenGui", CoreGui)
+screenGui.Name = "AimUI"
+screenGui.ResetOnSpawn = false
+
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0, 280, 0, 500)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -250)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+mainFrame.Active = true
+mainFrame.Draggable = false -- 自定义拖动
+
+local title = Instance.new("TextLabel", mainFrame)
+title.Size = UDim2.new(1, 0, 0, 40)
+title.BackgroundTransparency = 1
+title.Text = "玩家军团4.0"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 20
+
+-- 拖动功能
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+
+mainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+mainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- 按钮创建工具
+local yOffset = 45
+local function createToggle(name, default, callback)
+    local toggle = Instance.new("TextButton", mainFrame)
+    toggle.Size = UDim2.new(1, -20, 0, 30)
+    toggle.Position = UDim2.new(0, 10, 0, yOffset)
+    toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    toggle.Text = name .. ": " .. (default and "ON" or "OFF")
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.Font = Enum.Font.Gotham
+    toggle.TextSize = 16
+    yOffset = yOffset + 35
+
+    local state = default
+    toggle.MouseButton1Click:Connect(function()
+        state = not state
+        toggle.Text = name .. ": " .. (state and "ON" or "OFF")
+        callback(state)
+    end)
+end
+
+--== 🌈 阵营智能热成像系统（修改版） ==--
+local colorPalette = {
+    Color3.fromRGB(255, 0, 0),     -- 红
+    Color3.fromRGB(0, 120, 255),   -- 蓝
+    Color3.fromRGB(255, 255, 0),   -- 黄
+    Color3.fromRGB(255, 0, 255),   -- 紫
+    Color3.fromRGB(255, 165, 0),   -- 橙
+}
+
+local teamColorMap = {}
+
+local function assignTeamColors()
+    teamColorMap = {}
+    local uniqueTeams = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        local teamKey = p.Team and p.Team.Name or (p.TeamColor and tostring(p.TeamColor)) or "NoTeam"
+        if not table.find(uniqueTeams, teamKey) then
+            table.insert(uniqueTeams, teamKey)
+        end
+    end
+    for i, teamKey in ipairs(uniqueTeams) do
+        teamColorMap[teamKey] = colorPalette[(i - 1) % #colorPalette + 1]
+    end
+end
+
+-- 只修改颜色逻辑：己方固定绿色，敌方按原逻辑
+local function applyHighlight(player)
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+    if isDead(player.Character) then return end
+
+    local color
+    if player == LocalPlayer or player.Team == LocalPlayer.Team then
+        -- 己方固定绿色
+        color = Color3.fromRGB(0, 255, 0)
+    else
+        -- 其他阵营颜色按原逻辑
+        local teamKey = player.Team and player.Team.Name or (player.TeamColor and tostring(player.TeamColor)) or "NoTeam"
+        color = teamColorMap[teamKey] or Color3.fromRGB(255, 0, 0) -- 默认红色
+    end
+
+    if not player.Character:FindFirstChild("HeatVision") then
+        local hl = Instance.new("Highlight")
+        hl.Name = "HeatVision"
+        hl.FillColor = color
+        hl.OutlineColor = Color3.new(
+            math.clamp(color.R + 0.3, 0, 1),
+            math.clamp(color.G + 0.3, 0, 1),
+            math.clamp(color.B + 0.3, 0, 1)
+        )
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = player.Character
+        hl.Parent = player.Character
+    else
+        player.Character.HeatVision.FillColor = color
+        player.Character.HeatVision.OutlineColor = Color3.new(
+            math.clamp(color.R + 0.3, 0, 1),
+            math.clamp(color.G + 0.3, 0, 1),
+            math.clamp(color.B + 0.3, 0, 1)
+        )
+    end
+end
+
+-- 玩家加入时动态重新分配颜色
+Players.PlayerAdded:Connect(function(p)
+    p:GetPropertyChangedSignal("Team"):Connect(assignTeamColors)
+end)
+
+-- 玩家名 + 距离显示 (字体大小调整)
+local function updateNames(state)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character and player.Character:FindFirstChild("Head") then
+            local head = player.Character.Head
+            if state then
+                if not head:FindFirstChild("NameBillboard") then
+                    local bb = Instance.new("BillboardGui", head)
+                    bb.Name = "NameBillboard"
+                    bb.Size = UDim2.new(0, 200, 0, 20) -- 高度缩小，避免太大
+                    bb.StudsOffset = Vector3.new(0, 2, 0)
+                    bb.AlwaysOnTop = true
+
+                    local nameLabel = Instance.new("TextLabel", bb)
+                    nameLabel.Size = UDim2.new(1, 0, 0, 7)  -- 缩小一半
+                    nameLabel.Position = UDim2.new(0, 0, 0, 0)
+                    nameLabel.BackgroundTransparency = 1
+                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    nameLabel.Text = player.Name
+                    nameLabel.TextScaled = false
+                    nameLabel.Font = Enum.Font.Gotham
+                    nameLabel.TextSize = 10
+
+                    local distLabel = Instance.new("TextLabel", bb)
+                    distLabel.Name = "DistanceLabel"
+                    distLabel.Size = UDim2.new(1, 0, 0, 5)  -- 缩小到三分之一
+                    distLabel.Position = UDim2.new(0, 0, 0, 7)
+                    distLabel.BackgroundTransparency = 1
+                    distLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+                    distLabel.Text = "..."
+                    distLabel.TextScaled = false
+                    distLabel.Font = Enum.Font.Gotham
+                    distLabel.TextSize = 7
+                end
+            else
+                local bb = head:FindFirstChild("NameBillboard")
+                if bb then bb:Destroy() end
+            end
+        end
+    end
+end
+
+--== 🔘 UI 控制按钮 ==
+createToggle("启用自瞄", _G.AIMLOCK_ENABLED, function(val) _G.AIMLOCK_ENABLED = val end)
+createToggle("开启热成像", _G.HEATVISION_ENABLED, function(val)
+    _G.HEATVISION_ENABLED = val
+    updateHeatVision(val)
+end)
+createToggle("显示玩家名", _G.SHOW_NAMES, function(val)
+    _G.SHOW_NAMES = val
+    updateNames(val)
+end)
+createToggle("显示距离", _G.SHOW_DISTANCE, function(val) _G.SHOW_DISTANCE = val end)
+createToggle("队伍检测", _G.TEAM_CHECK, function(val)
+    _G.TEAM_CHECK = val
+    updateHeatVision(_G.HEATVISION_ENABLED)
+end)
+
+-- 速度提升
+createToggle("速度提升", _G.SPEED_ENABLED, function(val)
+    _G.SPEED_ENABLED = val
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+        LocalPlayer.Character:FindFirstChildOfClass("Humanoid").WalkSpeed = val and 50 or 16
+    end
+end)
+
+-- 穿墙模式
+createToggle("穿墙模式", _G.NOCOLLIDE_ENABLED, function(val)
+    _G.NOCOLLIDE_ENABLED = val
+end)
+
+-- 锁定部位切换按钮
+local partBtn = Instance.new("TextButton", mainFrame)
+partBtn.Size = UDim2.new(1, -20, 0, 30)
+partBtn.Position = UDim2.new(0, 10, 0, yOffset)
+partBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+partBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+partBtn.Font = Enum.Font.Gotham
+partBtn.TextSize = 16
+partBtn.Text = "锁定部位: " .. _G.AIM_PART
+yOffset = yOffset + 35
+partBtn.MouseButton1Click:Connect(function()
+    aimPartIndex = aimPartIndex % #aimParts + 1
+    _G.AIM_PART = aimParts[aimPartIndex]
+    partBtn.Text = "锁定部位: " .. _G.AIM_PART
+end)
+
+--== 🎛️ FOV 显示标签和滑动条 ==--
+local fovLabel = Instance.new("TextLabel", mainFrame)
+fovLabel.Size = UDim2.new(1, -20, 0, 20)
+fovLabel.Position = UDim2.new(0, 10, 0, yOffset)
+fovLabel.BackgroundTransparency = 1
+fovLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovLabel.Font = Enum.Font.Gotham
+fovLabel.TextSize = 14
+fovLabel.Text = "自瞄FOV半径: " .. _G.FOV_RADIUS
+yOffset = yOffset + 22
+
+local fovSlider = Instance.new("Frame", mainFrame)
+fovSlider.Size = UDim2.new(1, -20, 0, 20)
+fovSlider.Position = UDim2.new(0, 10, 0, yOffset)
+fovSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+fovSlider.BorderSizePixel = 0
+yOffset = yOffset + 30
+
+local fill = Instance.new("Frame", fovSlider)
+fill.Size = UDim2.new(_G.FOV_RADIUS / 300, 0, 1, 0)
+fill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+
+local draggingFOV = false
+
+fovSlider.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingFOV = true
+    end
+end)
+
+fovSlider.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingFOV = false
+    end
+end)
+
+fovSlider.InputChanged:Connect(function(input)
+    if draggingFOV and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local mouseX = input.Position.X
+        local sliderPos = fovSlider.AbsolutePosition.X
+        local sliderSize = fovSlider.AbsoluteSize.X
+        local relative = math.clamp(mouseX - sliderPos, 0, sliderSize)
+        local ratio = relative / sliderSize
+        _G.FOV_RADIUS = math.floor(ratio * 300)
+        if _G.FOV_RADIUS < 10 then _G.FOV_RADIUS = 10 end
+        fill.Size = UDim2.new(ratio, 0, 1, 0)
+        fovLabel.Text = "自瞄FOV半径: " .. _G.FOV_RADIUS
+    end
+end)
+
+--== 🪄 UI 隐藏快捷键 ==--
+local tip = Instance.new("TextLabel", mainFrame)
+tip.Size = UDim2.new(1, -20, 0, 20)
+tip.Position = UDim2.new(0, 10, 1, -25)
+tip.BackgroundTransparency = 1
+tip.TextColor3 = Color3.fromRGB(150, 150, 150)
+tip.Font = Enum.Font.Gotham
+tip.TextSize = 14
+tip.Text = "按 RightShift 隐藏/显示 UI"
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        mainFrame.Visible = not mainFrame.Visible
+    end
+end)
+
+--== 🔒 自瞄逻辑 ==--
+RunService.RenderStepped:Connect(function()
+    if _G.FLY_ENABLED and LocalPlayer.Character then
+        local flyVel = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if flyVel then
+            local moveVec = Vector3.zero
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVec += Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVec -= Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVec -= Camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVec += Camera.CFrame.RightVector end
+            flyVel.Velocity = moveVec * 80
+        end
+    end
+
+    if _G.NOCOLLIDE_ENABLED and LocalPlayer.Character then
+        for _, v in pairs(LocalPlayer.Character:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CanCollide = false
+            end
+        end
+    end
+
+    if _G.AIMLOCK_ENABLED and UserInputService:IsMouseButtonPressed(_G.LOCK_KEY) then
+        if currentTarget and currentTarget:IsDescendantOf(workspace) then
+            local targetCharacter = currentTarget.Parent
+            if targetCharacter and not isDead(targetCharacter) then
+                local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+                if not (_G.TEAM_CHECK and targetPlayer and targetPlayer.Team == LocalPlayer.Team) then
+                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, currentTarget.Position)
+                    return
+                end
+            end
+        end
+        local shortest = math.huge
+        local bestTarget = nil
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(_G.AIM_PART) then
+                if _G.TEAM_CHECK and player.Team == LocalPlayer.Team then continue end
+                if isDead(player.Character) then continue end
+                local part = player.Character[_G.AIM_PART]
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - UserInputService:GetMouseLocation()).Magnitude
+                if onScreen and dist < _G.FOV_RADIUS and dist < shortest then
+                    shortest = dist
+                    bestTarget = part
+                end
+            end
+        end
+        currentTarget = bestTarget
+    else
+        currentTarget = nil
+    end
+end)
+
+--== 📏 距离显示 ==--
+RunService.RenderStepped:Connect(function()
+    if not _G.SHOW_NAMES then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            local bb = player.Character.Head:FindFirstChild("NameBillboard")
+            if bb then
+                local distLabel = bb:FindFirstChild("DistanceLabel")
+                if distLabel then
+                    if _G.SHOW_DISTANCE then
+                        local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                            local dist = (LocalPlayer.Character.HumanoidRootPart.Position - hrp.Position).Magnitude
+                            distLabel.Text = string.format("[%.1f m]", dist)
+                            distLabel.Visible = true
+                        else
+                            distLabel.Visible = false
+                        end
+                    else
+                        distLabel.Visible = false
+                    end
+                end
+            end
+        end
+    end
+end)
+
+--== 玩家加入自动处理 ==--
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if _G.HEATVISION_ENABLED then applyHighlight(p) end
+        if _G.SHOW_NAMES then updateNames(true) end
+    end)
+end)
+
+-- 初始为所有玩家应用高亮和名字显示（如果开启）
+task.spawn(function()
+    while true do
+        if _G.HEATVISION_ENABLED then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then applyHighlight(p) end
+            end
+        end
+        task.wait(10)
+    end
+end)
+
+-- W键手动刷新热成像（测试用）
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.W and _G.HEATVISION_ENABLED then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then applyHighlight(p) end
+        end
+        print("♨️ 热成像手动刷新完成")
+    end
+end)
+
+--== 署名 ==
+local signature = Instance.new("TextLabel", mainFrame)
+signature.Size = UDim2.new(1, -20, 0, 20)
+signature.Position = UDim2.new(0, 10, 1, -50)
+signature.BackgroundTransparency = 1
+signature.TextColor3 = Color3.fromRGB(0, 255, 0)
+signature.Font = Enum.Font.GothamBold
+signature.TextSize = 14
+signature.Text = "本脚本由Jee（github:YXZM1017)开发 更新时间2025.10.22"
+signature.TextXAlignment = Enum.TextXAlignment.Center
+
+print("✅ 脚本加载完成（白名单+热成像+速度+穿墙+UI+自瞄+距离显示+可拖动+FOV调节）")
